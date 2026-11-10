@@ -1,0 +1,5 @@
+* text=auto eol=lf
+vendor/** -text
+shared/font-data.js -text
+*.wasm binary
+*.cmd text eol=crlf

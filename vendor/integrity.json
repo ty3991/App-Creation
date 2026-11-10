@@ -1,0 +1,13 @@
+{
+  "vendor/FontLoader.js": "5876c4a679dbef51cc3ebb8aba9a99be801366f7aded68eb45f7ff7ad849ac7b",
+  "vendor/OrbitControls.js": "9ebce25f62ab2161179241f6de0ac5b7cc82acb3bb2c8f57ed6b510c9dbc289e",
+  "vendor/manifold/manifold.js": "ca3c8a88df63bb3083013d1eb7f700bf23216594f6e98a2566e34f55d7341ce8",
+  "vendor/manifold/manifold.wasm": "73e3b419ad31294f6b1cc478173944e50efc4a34bfdeeff0107bdfc12975f11c",
+  "vendor/manifold/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+  "vendor/manifold/package.json": "261e129d5d8c4cbdd42354a16682d2a1c963a617e4e20c13fe7571c590644d9e",
+  "vendor/three/build/three.module.js": "104f56145899722094556490d787aae0617cc2fc3382f31df02d724ea1aee341",
+  "vendor/three/build/three.core.js": "613e370f76638fdef83926642bf256dc9615684922de1ce1f63a8583e5d78578",
+  "vendor/three/LICENSE": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+  "vendor/three/package.json": "87f2c99a8718e5fdd6f5e51427fde52c6075f2f698ddf8f7b4e162882df93940",
+  "shared/font-data.js": "2e88610c72cff335d44fee964f8ba231ec9ee97ccd827c0e465a13d7d7d0eb79"
+}

@@ -1,0 +1,7 @@
+.env*
+!.env.example
+data/
+test-results/
+node_modules/
+*.log
+vendor/*.tgz
