@@ -1,5 +1,7 @@
 # Printelligent Quote Desk
 
+For the $0 GoDaddy experiment, see [GoDaddy proof and verification](GO-DADDY-PROOF.md).
+
 A customer design-to-quote workspace and private owner queue for Printelligent Designs. This release is prepared for local review. It has **not been publicly deployed**.
 
 ## Open and stop the app (Windows)

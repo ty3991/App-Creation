@@ -7,8 +7,12 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "build:godaddy-proof": "node scripts/build-godaddy-proof.mjs",
     "start": "node --env-file-if-exists=../.env.local server.mjs",
     "test": "node --test test/*.test.mjs",
     "setup-owner": "node server.mjs setup-owner"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }
