@@ -1,0 +1,167 @@
+<style>
+  .pd {
+    font:
+      16px/1.45 system-ui,
+      sans-serif;
+    color: #153236;
+    background: #f4f9f8;
+    padding: 16px;
+    border-radius: 12px;
+    box-sizing: border-box;
+  }
+  .pd * {
+    box-sizing: border-box;
+  }
+  .pd [hidden] {
+    display: none !important;
+  }
+  .pd h2,
+  .pd h3,
+  .pd p {
+    margin: 0 0 12px;
+  }
+  .pd label {
+    display: block;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .pd input,
+  .pd select,
+  .pd textarea {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px;
+    border: 1px solid #6e8e8c;
+    border-radius: 6px;
+    font: inherit;
+    background: #fff;
+    color: #153236;
+  }
+  .pd input[type="color"] {
+    padding: 2px;
+    width: 100%;
+  }
+  .pd textarea {
+    resize: vertical;
+  }
+  .pd button {
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid #09535a;
+    border-radius: 6px;
+    background: #09535a;
+    color: white;
+    font: inherit;
+    cursor: pointer;
+    margin: 0 4px 6px 0;
+  }
+  .pd button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .pd :focus-visible {
+    outline: 3px solid #b27414;
+    outline-offset: 2px;
+  }
+  .pd .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
+  }
+  .pd #viewer {
+    height: clamp(220px, 40vh, 390px);
+    overflow: hidden;
+    border-radius: 8px;
+    background: #e7edeb;
+  }
+  .pd #dimensions {
+    margin: 8px 0 12px;
+    font-weight: 700;
+  }
+  .pd #validation {
+    color: #942c29;
+  }
+  .pd #guidance {
+    white-space: pre-line;
+  }
+  .pd #packet-box {
+    margin-top: 10px;
+    border-top: 1px solid #99aeaa;
+    padding-top: 14px;
+  }
+</style>
+<section class="pd" aria-labelledby="pd-heading">
+  <h2 id="pd-heading">Design your part</h2>
+  <p>
+    Adjust a design or describe a custom idea. Review the result, then prepare a
+    packet for your quote.
+  </p>
+  <form id="design">
+    <label
+      >Design family
+      <select id="family"></select
+    ></label>
+    <div id="viewer"></div>
+    <p id="dimensions" role="status"></p>
+    <div id="fields" class="grid"></div>
+    <div id="brief" hidden>
+      <label
+        >What will it do? <textarea name="purpose" maxlength="1500"></textarea>
+      </label>
+      <label
+        >What does it need to fit?
+        <textarea name="fit" maxlength="1500"></textarea>
+      </label>
+      <label
+        >Known measurements and units
+        <textarea name="measurements" maxlength="1500"></textarea>
+      </label>
+      <label
+        >Appearance preferences
+        <textarea name="appearance" maxlength="1500"></textarea>
+      </label>
+      <label
+        >Use conditions <textarea name="conditions" maxlength="1500"></textarea>
+      </label>
+      <button id="guide" type="button">Show questions to consider</button>
+      <p id="guidance" role="status"></p>
+    </div>
+    <div class="grid">
+      <label
+        >Quantity
+        <input
+          id="quantity"
+          type="number"
+          min="1"
+          max="10000"
+          value="1"
+          required
+      /></label>
+      <label
+        >Preview color <input id="color" type="color" value="#087d82"
+      /></label>
+      <label
+        >Material preference
+        <select id="material"></select
+      ></label>
+      <label
+        >Finish preference
+        <select id="finish"></select
+      ></label>
+    </div>
+    <label>Notes <textarea id="notes" maxlength="4000"></textarea></label>
+    <p id="validation" role="status"></p>
+    <button id="prepare" type="button" disabled>Prepare quote packet</button>
+  </form>
+  <div id="packet-box" hidden>
+    <p id="packet-state" role="status"></p>
+    <label
+      >Versioned design packet
+      <textarea id="packet" rows="5" readonly></textarea>
+    </label>
+    <button id="copy" type="button">Copy packet</button>
+    <button id="save" type="button">Download packet</button>
+    <p id="handoff-status" role="status"></p>
+  </div>
+</section>

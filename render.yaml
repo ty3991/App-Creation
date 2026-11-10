@@ -1,0 +1,26 @@
+# Proposed paid deployment only. Do not apply until TJ approves hosting and rollout.
+services:
+  - type: web
+    name: printelligent-quote-desk
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: off
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 4173
+      - key: PUBLIC_ORIGIN
+        sync: false
+      - key: DATA_DIR
+        value: /app/data
+      - key: AI_MODE
+        value: rules
+      - key: MAX_UPLOAD_STORAGE_MB
+        value: 512
+    disk:
+      name: quote-data
+      mountPath: /app/data
+      sizeGB: 2

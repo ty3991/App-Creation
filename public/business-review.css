@@ -1,0 +1,68 @@
+.review-banner {
+  background: #dff1f0;
+  color: #183d40;
+  text-align: center;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.business-hero {
+  background: #142424;
+  color: #fff;
+  padding: 60px 7%;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 40px;
+  align-items: center;
+  min-height: 580px;
+}
+.business-hero h1 {
+  font-size: clamp(40px, 5vw, 70px);
+  line-height: 1.1;
+}
+.business-hero h1 em {
+  color: #54d7d3;
+}
+.business-hero p {
+  max-width: 570px;
+}
+.business-hero .eyebrow {
+  color: #54d7d3;
+}
+.business-hero .hint {
+  color: #bad3d3;
+  margin-top: 24px;
+}
+.business-hero .primary {
+  display: inline-block;
+  background: #50d3ce !important;
+  color: #142424 !important;
+  margin-top: 20px;
+  font-weight: 700;
+  padding: 16px 24px;
+}
+.business-logo {
+  height: 400px;
+  background: transparent url("/assets/brand-logo.png") 52% 50% / 200% auto
+    no-repeat;
+}
+.site-header .secondary {
+  border: 1px solid #8eb7b8;
+  padding: 10px;
+  border-radius: 8px;
+}
+@media (max-width: 700px) {
+  .business-hero {
+    grid-template-columns: 1fr;
+    padding: 36px 6%;
+  }
+  .business-logo {
+    height: 240px;
+    max-width: 300px;
+    width: 100%;
+    margin: auto;
+  }
+  .business-hero h1 {
+    margin-top: 10px;
+  }
+}
