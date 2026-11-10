@@ -8,6 +8,7 @@ import {
   cadPrompt,
   quoteTotal,
 } from "/shared/schema.js";
+import { guidedIntake } from "/shared/intake-rules.js";
 import { Viewer } from "./viewer.js";
 const $ = (s) => document.querySelector(s),
   app = $("#app");
@@ -26,7 +27,7 @@ const defaults = () => ({
     Object.entries(families).map(([k, v]) => [k, { ...v.defaults }]),
   ),
   units: "mm",
-  color: "#758567",
+  color: "#087d82",
   material: "unsure",
   finish: "unsure",
   quantity: 1,
@@ -44,11 +45,51 @@ const defaults = () => ({
   contact: { name: "", email: "", phone: "" },
   mockup: null,
 });
+const memoryDraft = new Map();
+const draftStorage = {
+  getItem(k) {
+    try {
+      return sessionStorage.getItem(k) ?? memoryDraft.get(k) ?? null;
+    } catch {
+      return memoryDraft.get(k) ?? null;
+    }
+  },
+  setItem(k, v) {
+    memoryDraft.set(k, v);
+    try {
+      sessionStorage.setItem(k, v);
+    } catch {
+      toast(
+        "Browser draft storage is full or unavailable. Keep this tab open until your request is confirmed.",
+      );
+    }
+  },
+  removeItem(k) {
+    memoryDraft.delete(k);
+    try {
+      sessionStorage.removeItem(k);
+    } catch {}
+  },
+};
+let ownerDirty = false;
+function markOwnerDirty() {
+  ownerDirty = true;
+  for (const id of ["approve", "download-stl", "download-manifest"]) {
+    const el = $("#" + id);
+    if (el) el.disabled = true;
+  }
+  const notice = $("#owner-dirty");
+  if (notice) {
+    notice.hidden = false;
+    notice.textContent =
+      "Unsaved working changes. Save a new revision before approving or exporting this design.";
+  }
+}
 let state;
 try {
   state = {
     ...defaults(),
-    ...JSON.parse(sessionStorage.getItem("pd-draft") || "{}"),
+    ...JSON.parse(draftStorage.getItem("pd-draft") || "{}"),
   };
 } catch {
   state = defaults();
@@ -68,7 +109,7 @@ let viewer,
   proposal = null,
   guideIndex = 0;
 function persist() {
-  sessionStorage.setItem("pd-draft", JSON.stringify(state));
+  draftStorage.setItem("pd-draft", JSON.stringify(state));
 }
 function toast(s) {
   const e = $("#toast");
@@ -79,6 +120,7 @@ function toast(s) {
 }
 async function api(path, data) {
   const res = await fetch(path, {
+    signal: AbortSignal.timeout(45000),
     method: data === undefined ? "GET" : "POST",
     headers: data === undefined ? {} : { "Content-Type": "application/json" },
     body: data === undefined ? undefined : JSON.stringify(data),
@@ -95,10 +137,14 @@ function action(id, fn) {
   const e = $(id);
   if (e)
     e.addEventListener("click", async (ev) => {
+      if (e.dataset.busy) return;
+      e.dataset.busy = "1";
       try {
         await fn(ev);
       } catch (err) {
         toast(err.message);
+      } finally {
+        delete e.dataset.busy;
       }
     });
 }
@@ -142,9 +188,22 @@ function setMesh(m, s) {
 }
 function updatePreview(s = state) {
   if (s.mode === "custom") {
+    generation++;
     pending = false;
     mesh = null;
     const m = s.mockup;
+    const invalid =
+      m &&
+      Object.values(m).some(
+        (v) => v !== null && (!Number.isFinite(v) || v < 1 || v > 500),
+      );
+    if (invalid) {
+      $("#preview-notice").innerHTML =
+        '<div class="notice warn">Envelope measurements must be 1–500 mm, or left blank when unknown. The last valid preview is preserved.</div>';
+      if ($("#review")) $("#review").disabled = true;
+      return;
+    }
+    if ($("#review")) $("#review").disabled = false;
     $("#preview-badge").textContent = m
       ? "APPROXIMATE SIZE ENVELOPE"
       : "CUSTOM IDEA / BRIEF";
@@ -177,14 +236,21 @@ function updatePreview(s = state) {
     pending = false;
     generation++;
     if (button) button.disabled = true;
-    $("#preview-notice").innerHTML =
-      '<div class="notice warn">The preview shows your last valid design. Correct the highlighted settings to update it.</div>';
+    if (!mesh)
+      $("#dimensions").textContent = "Correct the settings to create a preview";
+    $("#preview-notice").innerHTML = mesh
+      ? '<div class="notice warn">The preview shows your last valid design. Correct the highlighted settings to update it.</div>'
+      : '<div class="notice warn">Correct the highlighted settings to create your preview.</div>';
     return;
   }
   pending = true;
   if (button) button.disabled = true;
   const id = ++generation;
-  worker.postMessage({ id, family: s.family, params: p });
+  clearTimeout(updatePreview.timer);
+  updatePreview.timer = setTimeout(
+    () => worker.postMessage({ id, family: s.family, params: p }),
+    100,
+  );
 }
 function numericField(
   key,
@@ -251,7 +317,7 @@ function settingsHTML(s) {
   return `<div class="section-label"><h3>Make it yours</h3><div class="unit-switch"><button data-unit="mm" class="${s.units === "mm" ? "selected" : ""}">mm</button><button data-unit="in" class="${s.units === "in" ? "selected" : ""}">in</button></div></div><div class="fields" id="params">${paramFields(s)}</div>`;
 }
 function preferencesHTML(s) {
-  return `<div class="section-label"><h3>Color & production preferences</h3></div><span class="label">Preview color</span><div class="swatches">${["#758567", "#d5a86e", "#efe8d8", "#353c3d", "#92769d", "#bd6c50"].map((c) => `<button class="swatch ${s.color === c ? "selected" : ""}" data-color="${c}" aria-label="Preview color ${c}" aria-pressed="${s.color === c}"></button>`).join("")}<input type="color" class="color-picker" id="color-custom" aria-label="Custom preview color" value="${s.color}"></div><p class="hint">Color, finish and material availability are confirmed during review.</p><div class="fields"><label class="field"><span class="label">Material preference</span><select id="material">${["unsure", "PLA", "PETG", "ASA"].map((x) => `<option value="${x}" ${s.material === x ? "selected" : ""}>${x === "unsure" ? "I’m not sure" : x}</option>`).join("")}</select></label><label class="field"><span class="label">Quantity</span><input type="number" id="quantity" min="1" max="10000" step="1" value="${s.quantity}"></label><label class="field wide"><span class="label">Finish preference</span><select id="finish">${["unsure", "visible layer lines okay", "smooth appearance preferred"].map((x) => `<option value="${x}" ${s.finish === x ? "selected" : ""}>${x === "unsure" ? "I’m not sure" : x}</option>`).join("")}</select></label></div>`;
+  return `<div class="section-label"><h3>Color & production preferences</h3></div><span class="label">Preview color</span><div class="swatches">${["#087d82", "#d5a86e", "#efe8d8", "#353c3d", "#92769d", "#bd6c50"].map((c) => `<button class="swatch ${s.color === c ? "selected" : ""}" data-color="${c}" aria-label="Preview color ${c}" aria-pressed="${s.color === c}"></button>`).join("")}<input type="color" class="color-picker" id="color-custom" aria-label="Custom preview color" value="${s.color}"></div><p class="hint">Color, finish and material availability are confirmed during review.</p><div class="fields"><label class="field"><span class="label">Material preference</span><select id="material">${["unsure", "PLA", "PETG", "ASA"].map((x) => `<option value="${x}" ${s.material === x ? "selected" : ""}>${x === "unsure" ? "I’m not sure" : x}</option>`).join("")}</select></label><label class="field"><span class="label">Quantity</span><input type="number" id="quantity" min="1" max="10000" step="1" value="${s.quantity}"></label><label class="field wide"><span class="label">Finish preference</span><select id="finish">${["unsure", "visible layer lines okay", "smooth appearance preferred"].map((x) => `<option value="${x}" ${s.finish === x ? "selected" : ""}>${x === "unsure" ? "I’m not sure" : x}</option>`).join("")}</select></label></div>`;
 }
 function attachmentsHTML(s, owner = false) {
   return `<label class="upload-zone">＋ Add ${owner ? "production CAD, STL or references" : "photos, sketches or model files"}<br><span class="hint">Up to 8 files · 8 MB each · Private to this request</span><input id="upload" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.stl,.3mf,.step,.stp${owner ? ",.scad,.py" : ""}"></label><div class="attachments" id="attachments">${attachmentRows(s)}</div>`;
@@ -265,7 +331,7 @@ function attachmentRows(s) {
     .join("");
 }
 function customHTML() {
-  return `<h3>Tell us what you have in mind.</h3><p class="muted">A rough idea, a broken part, a sketch—we can start there.</p><label class="field"><span class="label">Your idea</span><textarea id="notes" rows="4" maxlength="10000" placeholder="I need a replacement clip for…">${esc(state.notes)}</textarea></label>${attachmentsHTML(state)}<div class="guide-box"><h3>A little help shaping your brief</h3><p class="muted">Answer directly below, or talk it through. Suggested designs always need your confirmation.</p><div id="conversation" class="conversation">${state.history.map((m) => `<div class="message ${m.role === "user" ? "user" : ""}">${esc(m.text)}</div>`).join("")}</div><label class="field"><span class="label">Add a message</span><textarea id="chat-message" rows="2" placeholder="What measurements do you need from me?"></textarea></label><button class="secondary full" id="ask-ai">Get guided help ↗</button><p class="hint">Your description and up to two supported photos are sent to OpenAI when you select this button. You can submit without AI.</p><div id="proposal"></div></div><div class="section-label"><h3>The useful details</h3><button class="quiet" id="guide-next">One at a time →</button></div><div id="brief-fields">${Object.entries(
+  return `<h3>Tell us what you have in mind.</h3><p class="muted">A rough idea, a broken part, a sketch—we can start there.</p><label class="field"><span class="label">Your idea</span><textarea id="notes" rows="4" maxlength="10000" placeholder="I need a replacement clip for…">${esc(state.notes)}</textarea></label>${attachmentsHTML(state)}<div class="guide-box"><h3>A little help shaping your brief</h3><p class="muted">Answer directly below, or talk it through. Suggested designs always need your confirmation.</p><div id="conversation" class="conversation">${state.history.map((m) => `<div class="message ${m.role === "user" ? "user" : ""}">${esc(m.text)}</div>`).join("")}</div><label class="field"><span class="label">Add a message</span><textarea id="chat-message" rows="2" placeholder="What measurements do you need from me?"></textarea></label><button class="secondary full" id="ask-ai">${config.aiConfigured ? "Ask optional AI" : "Get free guided help"}</button><p class="hint">${config.aiConfigured ? "Your description and up to two supported photos are sent to OpenAI only when you select this button. You can submit without AI." : "Rule-based guidance · No AI charges · Photos stay with your private request and are not interpreted."}</p><div id="proposal"></div></div><div class="section-label"><h3>The useful details</h3><button class="quiet" id="guide-next">One at a time →</button></div><div id="brief-fields">${Object.entries(
     questionLabels,
   )
     .map(
@@ -293,7 +359,7 @@ function renderDesigner() {
           )
           .join("")}</div>${settingsHTML(state)}`
       : customHTML()
-  }${preferencesHTML(state)}${state.mode === "configure" ? `<div class="section-label"><h3>Anything else we should know?</h3></div><textarea class="text-input" id="notes" maxlength="10000" rows="3" placeholder="Where it will go, how it should fit, or any questions…">${esc(state.notes)}</textarea>${attachmentsHTML(state)}` : ""}<button class="primary full review-button" id="review">Review my request <span>→</span></button><p class="hint">You’ll add contact details and review everything before submitting.</p></section><section class="preview-column">${previewHTML()}<div class="preview-aside"><span class="aside-icon">◈</span><p><strong>Built around your needs.</strong>Dimensions, fit and purpose come first. We’ll select the print settings after reviewing your request.</p></div></section></div></main>`;
+  }${preferencesHTML(state)}${state.mode === "configure" ? `<div class="section-label"><h3>Anything else we should know?</h3></div><textarea class="text-input" id="notes" aria-label="Additional notes" maxlength="10000" rows="3" placeholder="Where it will go, how it should fit, or any questions…">${esc(state.notes)}</textarea>${attachmentsHTML(state)}` : ""}<button class="primary full review-button" id="review">Review my request <span>→</span></button><p class="hint">You’ll add contact details and review everything before submitting.</p></section><section class="preview-column">${previewHTML()}<div class="preview-aside"><span class="aside-icon">◈</span><p><strong>Built around your needs.</strong>Dimensions, fit and purpose come first. We’ll select the print settings after reviewing your request.</p></div></section></div></main>`;
   mountViewer(previous);
   bindEditor(state, false);
   document.querySelectorAll("[data-mode]").forEach(
@@ -312,6 +378,11 @@ function renderDesigner() {
         renderDesigner();
       }),
   );
+  document
+    .querySelectorAll("[data-mode],[data-family],[data-unit]")
+    .forEach((e) =>
+      e.setAttribute("aria-pressed", e.classList.contains("selected")),
+    );
   action("#review", review);
   if (state.mode === "custom") bindCustom();
   updatePreview();
@@ -319,6 +390,7 @@ function renderDesigner() {
 function bindEditor(s, owner) {
   const save = () => {
     if (!owner) persist();
+    else markOwnerDirty();
   };
   document.querySelectorAll("[data-param]").forEach((e) =>
     e.addEventListener("input", () => {
@@ -471,7 +543,9 @@ function bindCustom() {
   action("#ask-ai", async () => {
     const btn = $("#ask-ai");
     btn.disabled = true;
-    btn.textContent = "Thinking through your idea…";
+    btn.textContent = config.aiConfigured
+      ? "Thinking through your idea…"
+      : "Preparing measurement questions…";
     try {
       const msg = $("#chat-message").value.trim();
       if (msg) {
@@ -492,6 +566,7 @@ function bindCustom() {
         ...new Set([...state.questions, ...r.questions]),
       ].slice(-12);
       proposal = r.proposal;
+      $("#proposal").innerHTML = "";
       persist();
       $("#conversation").innerHTML = state.history
         .map(
@@ -516,7 +591,9 @@ function bindCustom() {
       }
     } finally {
       btn.disabled = false;
-      btn.textContent = "Get guided help ↗";
+      btn.textContent = config.aiConfigured
+        ? "Ask optional AI"
+        : "Get free guided help";
     }
   });
 }
@@ -570,6 +647,13 @@ function review() {
     state.quantity > 10000
   )
     throw Error("Choose a quantity from 1 to 10,000.");
+  if (
+    state.mockup &&
+    Object.values(state.mockup).some(
+      (v) => v !== null && (!Number.isFinite(v) || v < 1 || v > 500),
+    )
+  )
+    throw Error("Correct the envelope measurements or leave them blank.");
   reviewPayload = payload(state);
   dispose();
   app.innerHTML = `<main class="page"><p class="eyebrow">ONE LAST LOOK</p><h1>Your idea, <em>ready for review.</em></h1><p class="intro-copy">Check the design and details below. TJ will review fit, production options and pricing personally.</p><div class="steps"><span>01 Shape your idea</span><span class="active">02 Review the details</span><span>03 Request a quote</span></div><div class="review-grid"><div class="panel">${reviewPayload.previewImage ? `<img class="review-image" alt="Frozen preview of your submitted design" src="${reviewPayload.previewImage}">` : '<p class="muted">No preview image available. Your exact settings and brief will be saved.</p>'}${summaryHTML(reviewPayload)}${state.mode === "custom" ? '<div class="notice warn">Custom idea: no production geometry is approved. Any size envelope is approximate.</div>' : ""}</div><div><section class="panel"><h2>Your brief & references</h2><p class="text-block">${esc(state.notes || "No additional notes.")}</p>${Object.entries(
@@ -584,7 +668,7 @@ function review() {
       "",
     )}<div class="attachments">${state.attachments.map((a) => `<div class="attachment">${esc(a.name)}</div>`).join("") || '<p class="muted">No attachments.</p>'}</div>${state.mode === "custom" ? `<h3>Unconfirmed details</h3><ul class="question-list">${[...new Set([...unanswered(state.brief), ...reviewPayload.questions])].map((q) => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}</section><section class="panel"><h2>Where should we follow up?</h2><form id="submit-form"><div class="fields"><label class="field wide"><span class="label">Your name</span><input id="name" required maxlength="100" autocomplete="name" value="${esc(state.contact.name)}"></label><label class="field wide"><span class="label">Email address</span><input id="email" required type="email" maxlength="254" autocomplete="email" value="${esc(state.contact.email)}"></label><label class="field wide"><span class="label">Phone (optional)</span><input id="phone" type="tel" maxlength="40" autocomplete="tel" value="${esc(state.contact.phone)}"></label></div><label class="check-label"><input id="consent" type="checkbox" required>I understand this is a quote request. Pricing, production options and any unconfirmed dimensions require review.</label><div class="actions"><button class="quiet" type="button" id="back">← Keep editing</button><button class="primary" id="submit" type="submit">Send quote request →</button></div><p class="inline-error" id="submit-error" role="alert"></p></form></section></div></div></main>`;
   action("#back", () => {
-    sessionStorage.removeItem("pd-pending");
+    draftStorage.removeItem("pd-pending");
     renderDesigner();
   });
   $("#submit-form").onsubmit = async (e) => {
@@ -594,7 +678,7 @@ function review() {
     $("#submit-error").textContent = "";
     try {
       let frozen;
-      const previous = sessionStorage.getItem("pd-pending");
+      const previous = draftStorage.getItem("pd-pending");
       if (previous) frozen = JSON.parse(previous);
       else {
         state.contact = {
@@ -608,11 +692,11 @@ function review() {
           contact: state.contact,
           idempotencyKey: crypto.randomUUID(),
         };
-        sessionStorage.setItem("pd-pending", JSON.stringify(frozen));
+        draftStorage.setItem("pd-pending", JSON.stringify(frozen));
       }
       const r = await api("/api/quotes", frozen);
-      sessionStorage.removeItem("pd-draft");
-      sessionStorage.removeItem("pd-pending");
+      draftStorage.removeItem("pd-draft");
+      draftStorage.removeItem("pd-pending");
       app.innerHTML = `<main class="page"><section class="success panel"><div class="success-symbol">✓</div><p class="eyebrow">YOUR IDEA IS IN GOOD HANDS</p><h1>Request received.</h1><p class="request-number">${esc(r.number)}</p><p>TJ will review your design, references and open questions, then follow up using the contact details you provided.</p><p class="muted">Your submitted revision is saved exactly as sent. This confirmation is not a price or production approval.</p><a class="primary" href="/">Start another idea →</a></section></main>`;
     } catch (err) {
       $("#submit-error").textContent =
@@ -636,7 +720,8 @@ async function owner() {
   }
 }
 function renderLogin() {
-  app.innerHTML = `<main class="page"><section class="panel login-panel"><p class="eyebrow">PRIVATE OWNER WORKSPACE</p><h1>Welcome back, TJ.</h1><p class="muted">Review requests, refine designs and prepare a personal quote.</p><form id="login"><label class="field"><span class="label">Owner email</span><input id="owner-email" type="email" required autocomplete="username"></label><label class="field"><span class="label">Password</span><input id="owner-password" type="password" required autocomplete="current-password"></label><button class="primary full">Sign in →</button><p class="inline-error" id="login-error"></p></form><details><summary>First time? Create your owner login</summary><p class="muted">Open the local data/owner-setup-token.txt file. This setup works only on the server’s own computer.</p><form id="setup"><label class="field"><span class="label">Local setup token</span><input id="setup-token" required autocomplete="off"></label><label class="field"><span class="label">Owner email</span><input id="setup-email" type="email" required></label><label class="field"><span class="label">New password (12+ characters)</span><input id="setup-password" type="password" minlength="12" required autocomplete="new-password"></label><button class="secondary">Create owner login</button><p class="inline-error" id="setup-error"></p></form></details></section></main>`;
+  app.innerHTML = `<main class="page"><section class="panel login-panel"><p class="eyebrow">PRIVATE OWNER WORKSPACE</p><h1>Welcome back, TJ.</h1><p class="muted">Review requests, refine designs and prepare a personal quote.</p><form id="login"><label class="field"><span class="label">Owner email</span><input id="owner-email" type="email" required autocomplete="username"></label><label class="field"><span class="label">Password</span><input id="owner-password" type="password" required autocomplete="current-password"></label><button class="primary full">Sign in →</button><p class="inline-error" id="login-error" role="alert"></p></form><details><summary>First time? Create your owner login</summary><p class="muted">Open the local data/owner-setup-token.txt file. This setup works only on the server’s own computer.</p><form id="setup"><label class="field"><span class="label">Local setup token</span><input id="setup-token" required autocomplete="off"></label><label class="field"><span class="label">Owner email</span><input id="setup-email" type="email" required></label><label class="field"><span class="label">New password (12+ characters)</span><input id="setup-password" type="password" minlength="12" required autocomplete="new-password"></label><button class="secondary">Create owner login</button><p class="inline-error" id="setup-error" role="alert"></p></form></details></section></main>`;
+  if (!config.ownerSetupAvailable) $("#setup").closest("details").hidden = true;
   $("#login").onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -707,6 +792,7 @@ async function openQuote(id, revisionId) {
     ownerQuote.revisions.find((r) => r.id === revisionId) ||
     ownerQuote.revisions[0];
   ownerState = revisionToState(ownerRevision);
+  ownerDirty = false;
   renderQueue();
 }
 function renderOwnerDetail() {
@@ -749,9 +835,14 @@ function renderOwnerDetail() {
       )
       .join(
         "",
-      )}</div><button class="secondary full" id="calculate">Calculate proposed price</button><p id="price-result" class="notice">${Number.isFinite(r.price?.price) ? "Saved estimate: $" + r.price.price.toFixed(2) : "Enter all inputs to calculate."}</p><label class="check-label"><input id="price-confirm" type="checkbox">I confirm these slicer and cost inputs for this revision.</label></details></section></div><div class="actions"><button class="primary" id="save-revision">Save a new owner revision</button><button class="secondary" id="approve" ${r.kind === "customer" ? "disabled" : ""}>Approve saved revision</button></div><p class="hint">Approval applies to the selected saved revision. Save working changes first.</p><div class="separator"></div><h3>Exports from the selected saved revision</h3><p class="hint">${r.snapshot.generatorVersion} · ${r.mesh ? r.mesh.checks.triangles + " triangles · Mesh " + (r.mesh.checks.valid ? "checks passed" : "checks failed") : "Custom request: attach CAD and STL as an owner revision."}</p>${r.mesh ? `<label class="check-label"><input type="checkbox" id="oversize">I reviewed any printer-volume warning and production plan.</label><div class="actions"><button class="secondary" id="download-stl" ${r.kind !== "customer" && q.approvedRevision !== r.id ? "disabled" : ""}>Download STL (mm)</button><button class="quiet" id="download-manifest" ${r.kind !== "customer" && q.approvedRevision !== r.id ? "disabled" : ""}>Settings manifest</button></div>` : ""}${r.snapshot.previewImage ? `<details><summary>Original frozen preview image</summary><img class="review-image" src="${r.snapshot.previewImage}" alt="Saved revision preview"></details>` : ""}</div>`;
+      )}</div><button class="secondary full" id="calculate">Calculate proposed price</button><p id="price-result" class="notice">${Number.isFinite(r.price?.price) ? "Saved estimate: $" + r.price.price.toFixed(2) : "Enter all inputs to calculate."}</p><label class="check-label"><input id="price-confirm" type="checkbox">I confirm these slicer and cost inputs for this revision.</label></details></section></div><div class="actions"><button class="primary" id="save-revision">Save a new owner revision</button><button class="secondary" id="approve" ${r.kind === "customer" ? "disabled" : ""}>Approve saved revision</button></div><p class="hint">Approval applies to the selected saved revision. Save working changes first.</p><div class="separator"></div><div id="owner-dirty" class="notice warn" role="status" hidden></div><h3>Exports from the selected saved revision</h3><p class="hint">${r.snapshot.generatorVersion} · ${r.mesh ? r.mesh.checks.triangles + " triangles · Mesh " + (r.mesh.checks.valid ? "checks passed" : "checks failed") : "Custom request: attach CAD and STL as an owner revision."}</p>${r.mesh ? `<label class="check-label"><input type="checkbox" id="oversize">I reviewed any printer-volume warning and production plan.</label><div class="actions"><button class="secondary" id="download-stl" ${r.kind !== "customer" && q.approvedRevision !== r.id ? "disabled" : ""}>Download STL (mm)</button><button class="quiet" id="download-manifest" ${r.kind !== "customer" && q.approvedRevision !== r.id ? "disabled" : ""}>Settings manifest</button></div>` : ""}${r.snapshot.previewImage ? `<details><summary>Original frozen preview image</summary><img class="review-image" src="${r.snapshot.previewImage}" alt="Saved revision preview"></details>` : ""}</div>`;
   mountViewer(previous);
   bindEditor(s, true);
+  $("#owner-detail").addEventListener("input", (e) => {
+    if (!["status", "revision-select", "oversize"].includes(e.target.id))
+      markOwnerDirty();
+  });
+  if (ownerDirty) markOwnerDirty();
   if (r.mesh) {
     setMesh(r.mesh, s);
     if (!previous) viewer?.reset();
@@ -768,6 +859,7 @@ function renderOwnerDetail() {
   $("#revision-select").onchange = (e) => {
     ownerRevision = q.revisions.find((r) => r.id === e.target.value);
     ownerState = revisionToState(ownerRevision);
+    ownerDirty = false;
     renderOwnerDetail();
   };
   $("#status").onchange = async (e) => {
@@ -822,6 +914,7 @@ function renderOwnerDetail() {
     await openQuote(q.id, result.revisionId);
   });
   action("#approve", async () => {
+    if (ownerDirty) throw Error("Save your working changes first.");
     await api("/api/owner/quotes/" + q.id + "/approve", { revisionId: r.id });
     toast("Saved revision approved. No quote was sent.");
     await openQuote(q.id, r.id);
@@ -849,7 +942,7 @@ async function download(url, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 function renderPending() {
-  const frozen = JSON.parse(sessionStorage.getItem("pd-pending"));
+  const frozen = JSON.parse(draftStorage.getItem("pd-pending"));
   dispose();
   app.innerHTML =
     '<main class="page"><section class="panel"><p class="eyebrow">SUBMISSION RECOVERY</p><h1>Let’s confirm your request.</h1><p>A previous submission did not finish confirming. Retry the exact saved request to retrieve its number without creating a duplicate.</p>' +
@@ -862,8 +955,8 @@ function renderPending() {
     btn.disabled = true;
     try {
       const r = await api("/api/quotes", frozen);
-      sessionStorage.removeItem("pd-pending");
-      sessionStorage.removeItem("pd-draft");
+      draftStorage.removeItem("pd-pending");
+      draftStorage.removeItem("pd-draft");
       app.innerHTML =
         '<main class="page"><section class="success panel"><div class="success-symbol">✓</div><h1>Request confirmed.</h1><p class="request-number">' +
         esc(r.number) +
@@ -876,6 +969,9 @@ function renderPending() {
 }
 async function boot() {
   config = await api("/api/session");
+  $("#mode-label").textContent = config.aiConfigured
+    ? "Optional AI available"
+    : "Free guided intake";
   worker = new Worker("/geometry-worker.js", { type: "module" });
   worker.onmessage = ({ data }) => {
     if (data.id !== generation) return;
@@ -901,7 +997,7 @@ async function boot() {
   if (location.pathname === "/owner") await owner();
   else {
     renderDesigner();
-    if (sessionStorage.getItem("pd-pending")) renderPending();
+    if (draftStorage.getItem("pd-pending")) renderPending();
   }
 }
 boot().catch((e) => {

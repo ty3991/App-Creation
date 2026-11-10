@@ -11,7 +11,7 @@ export const hash = (s) => createHash("sha256").update(s).digest("hex");
 export function openStore(dir) {
   mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(resolve(dir, "quotes.sqlite"));
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS owners (id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, salt TEXT NOT NULL, password TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, role TEXT NOT NULL, expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, session TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL, created INTEGER NOT NULL);
@@ -22,17 +22,29 @@ CREATE TRIGGER IF NOT EXISTS immutable_revision BEFORE UPDATE ON revisions BEGIN
 CREATE TRIGGER IF NOT EXISTS no_delete_revision BEFORE DELETE ON revisions BEGIN SELECT RAISE(ABORT,'Revisions are immutable'); END;
 CREATE TABLE IF NOT EXISTS approvals (quote_id TEXT PRIMARY KEY REFERENCES quotes(id), revision_id TEXT NOT NULL REFERENCES revisions(id), created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, reset INTEGER NOT NULL);`);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS revisions_quote ON revisions(quote_id,created); CREATE INDEX IF NOT EXISTS uploads_session ON uploads(session);",
+  );
+  db.prepare("DELETE FROM sessions WHERE expires < ?").run(Date.now());
+  db.prepare("DELETE FROM limits WHERE reset < ?").run(Date.now());
   return db;
 }
 export function createOwner(db, email, password) {
-  if (password.length < 12 || !email.includes("@"))
+  if (
+    typeof password !== "string" ||
+    password.length < 12 ||
+    password.length > 256 ||
+    typeof email !== "string" ||
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  )
     throw Error("Use an email address and password of at least 12 characters.");
   if (db.prepare("SELECT id FROM owners").get())
     throw Error("Owner already exists.");
   const salt = randomBytes(24).toString("hex"),
     digest = scryptSync(password, salt, 64).toString("hex");
   db.prepare("INSERT INTO owners VALUES(1,?,?,?)").run(
-    email.toLowerCase(),
+    email.trim().toLowerCase(),
     salt,
     digest,
   );
@@ -46,7 +58,7 @@ export function verifyOwner(db, email, password) {
   );
   return (
     !!o &&
-    email.toLowerCase() === o.email &&
+    email.trim().toLowerCase() === o.email &&
     timingSafeEqual(Buffer.from(o.password, "hex"), digest)
   );
 }

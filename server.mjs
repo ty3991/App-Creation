@@ -1,8 +1,10 @@
 import http from "node:http";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, unlink } from "node:fs/promises";
 import { resolve, dirname, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
+import { gzip } from "node:zlib";
+import { promisify } from "node:util";
 import {
   openStore,
   hash,
@@ -23,7 +25,9 @@ import {
   unanswered,
 } from "./shared/schema.js";
 import { intake } from "./ai.mjs";
+import { guidedIntake } from "./shared/intake-rules.js";
 const ROOT = dirname(fileURLToPath(import.meta.url));
+const compress = promisify(gzip);
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -44,6 +48,26 @@ export async function createApp(options = {}) {
   const origin =
       options.origin || process.env.PUBLIC_ORIGIN || "http://localhost:4173",
     secure = origin.startsWith("https:");
+  const canonical = new URL(origin);
+  if (
+    canonical.origin !== origin ||
+    !["http:", "https:"].includes(canonical.protocol)
+  )
+    throw Error(
+      "PUBLIC_ORIGIN must be an exact HTTP(S) origin without a trailing slash.",
+    );
+  const localOnly = ["localhost", "127.0.0.1", "[::1]"].includes(
+    canonical.hostname,
+  );
+  if (!localOnly && !secure)
+    throw Error("Public deployments require HTTPS PUBLIC_ORIGIN.");
+  const aiEnabled =
+    (options.aiMode || process.env.AI_MODE || "rules") === "openai" &&
+    process.env.AI_DISABLED !== "1";
+  const maxStorage =
+    Number(process.env.MAX_UPLOAD_STORAGE_MB || 1024) * 1024 * 1024;
+  if (!Number.isFinite(maxStorage) || maxStorage <= 0)
+    throw Error("MAX_UPLOAD_STORAGE_MB must be positive.");
   const volume = ["X", "Y", "Z"].map((k) =>
     Number(process.env["PRINTER_" + k] || 256),
   );
@@ -62,6 +86,7 @@ export async function createApp(options = {}) {
     });
     res.end(JSON.stringify(data));
   };
+  const staticCache = new Map();
   const limited = (req, name, max, ms) => {
     if (
       !rateLimit(
@@ -84,7 +109,10 @@ export async function createApp(options = {}) {
       chunks.push(c);
     }
     try {
-      return JSON.parse(Buffer.concat(chunks).toString());
+      const value = JSON.parse(Buffer.concat(chunks).toString());
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        fail(400, "Send a JSON object.");
+      return value;
     } catch {
       fail(400, "Invalid JSON");
     }
@@ -149,7 +177,7 @@ export async function createApp(options = {}) {
     if (
       !contact ||
       typeof contact.name !== "string" ||
-      contact.name.length < 1 ||
+      contact.name.trim().length < 1 ||
       contact.name.length > 100 ||
       typeof contact.email !== "string" ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email) ||
@@ -220,12 +248,19 @@ export async function createApp(options = {}) {
       notes: b.notes,
       brief,
       contact: {
-        name: contact.name,
-        email: contact.email,
-        phone: contact.phone,
+        name: contact.name.trim(),
+        email: contact.email.trim(),
+        phone: contact.phone.trim(),
       },
       attachments: uploads(b.attachmentIds || [], sid, owner),
-      questions: [...new Set([...unanswered(brief), ...questions])],
+      questions: [
+        ...new Set([
+          ...(b.mode === "custom"
+            ? guidedIntake({ notes: b.notes, brief }).questions
+            : unanswered(brief)),
+          ...questions,
+        ]),
+      ],
       mockup,
       previewImage,
       generatorVersion: VERSION,
@@ -261,6 +296,13 @@ export async function createApp(options = {}) {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("X-Frame-Options", "DENY");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()",
+      );
+      if (secure)
+        res.setHeader("Strict-Transport-Security", "max-age=31536000");
       res.setHeader(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
@@ -268,8 +310,40 @@ export async function createApp(options = {}) {
       const url = new URL(req.url, "http://localhost"),
         path = url.pathname,
         method = req.method;
+      if (method === "GET" && path === "/api/health")
+        return json(res, 200, {
+          app: "printelligent-quote-desk",
+          version: VERSION,
+          status:
+            db.prepare("SELECT 1 AS ok").get().ok === 1 ? "ready" : "error",
+          instance: localOnly ? process.env.PD_LOCAL_INSTANCE || null : null,
+        });
+      const requestHost = String(req.headers.host || "");
+      const loopbackHost = /^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(
+        requestHost,
+      );
+      if (requestHost !== canonical.host && !(localOnly && loopbackHost))
+        fail(403, "Use the configured website address.");
       if (!["GET", "HEAD"].includes(method) && req.headers.origin !== origin)
         fail(403, "Request origin not allowed.");
+      if (method === "POST" && path === "/api/local/stop") {
+        if (
+          !localOnly ||
+          !process.env.PD_LOCAL_CONTROL ||
+          req.headers.authorization !==
+            "Bearer " + process.env.PD_LOCAL_CONTROL ||
+          !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+            req.socket.remoteAddress,
+          )
+        )
+          fail(403, "Local launcher control required.");
+        json(res, 200, { ok: true });
+        server.close(() => {
+          db.close();
+        });
+        server.closeIdleConnections();
+        return;
+      }
       if (method === "GET" && path === "/api/session") {
         limited(req, "session", 120, 3600000);
         let sid;
@@ -282,12 +356,18 @@ export async function createApp(options = {}) {
         }
         return json(res, 200, {
           printerVolume: volume,
-          aiConfigured:
-            !!process.env.OPENAI_API_KEY && process.env.AI_DISABLED !== "1",
+          aiConfigured: aiEnabled && !!process.env.OPENAI_API_KEY,
+          intakeMode:
+            aiEnabled && !!process.env.OPENAI_API_KEY ? "openai" : "rules",
+          ownerSetupAvailable:
+            localOnly && !db.prepare("SELECT id FROM owners").get(),
+          businessUrl: "https://printelligentdesigns.com/",
           generatorVersion: VERSION,
         });
       }
       if (method === "POST" && path === "/api/owner/setup") {
+        if (!localOnly)
+          fail(403, "Use the private server terminal to initialize the owner.");
         limited(req, "setup", 5, 3600000);
         if (
           !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
@@ -300,6 +380,9 @@ export async function createApp(options = {}) {
           fail(403, "Use the setup token in the local data folder.");
         try {
           createOwner(db, b.email, b.password);
+          await unlink(resolve(dataDir, "owner-setup-token.txt")).catch(
+            () => {},
+          );
         } catch (e) {
           fail(400, e.message);
         }
@@ -378,8 +461,16 @@ export async function createApp(options = {}) {
           .get(sid).n;
         if (stored + bytes.length > 40 * 1024 * 1024)
           fail(413, "Session upload limit is 40 MB.");
+        const total = db
+          .prepare("SELECT coalesce(sum(length(bytes)),0) AS n FROM uploads")
+          .get().n;
+        if (total + bytes.length > maxStorage)
+          fail(
+            507,
+            "Reference storage is full. You can submit your brief without new attachments; TJ will arrange another way to receive them.",
+          );
         const id = randomUUID(),
-          name = basename(b.name).replace(/[\r\n"<>]/g, "_");
+          name = basename(b.name).replace(/[\x00-\x1f\x7f"<>]/g, "_");
         db.prepare("INSERT INTO uploads VALUES(?,?,?,?,?,?)").run(
           id,
           sid,
@@ -409,7 +500,7 @@ export async function createApp(options = {}) {
           fail(403, "Access denied");
         res.writeHead(200, {
           "Content-Type": a.mime,
-          "Content-Disposition": `attachment; filename="${a.name}"`,
+          "Content-Disposition": `attachment; filename="${a.name.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(a.name)}`,
           "Cache-Control": "no-store",
           "Content-Security-Policy": "sandbox; default-src 'none'",
         });
@@ -417,8 +508,8 @@ export async function createApp(options = {}) {
       }
       if (method === "POST" && path === "/api/intake") {
         const sid = session(req, "draft");
-        limited(req, "AI", 12, 3600000);
-        if (!rateLimit(db, "AI-global", 200, 86400000))
+        limited(req, "intake", aiEnabled ? 12 : 120, 3600000);
+        if (aiEnabled && !rateLimit(db, "AI-global", 200, 86400000))
           fail(429, "Daily intake allowance reached. Continue manually.");
         const b = await body(req, 50000);
         if (
@@ -427,7 +518,31 @@ export async function createApp(options = {}) {
           JSON.stringify(b.brief || {}).length > 15000
         )
           fail(400, "Intake text is too long.");
+        if (
+          b.brief &&
+          (typeof b.brief !== "object" ||
+            Array.isArray(b.brief) ||
+            Object.entries(b.brief).some(
+              ([k, v]) =>
+                ![
+                  "purpose",
+                  "fit",
+                  "measurements",
+                  "appearance",
+                  "conditions",
+                ].includes(k) ||
+                typeof v !== "string" ||
+                v.length > 3000,
+            ))
+        )
+          fail(400, "Invalid brief fields.");
         const files = uploads(b.attachmentIds || [], sid);
+        if (!aiEnabled)
+          return json(
+            res,
+            200,
+            guidedIntake({ notes: b.notes, brief: b.brief || {} }),
+          );
         const images = files
           .filter(
             (a) => a.mime.startsWith("image/") && a.size < 4 * 1024 * 1024,
@@ -563,6 +678,8 @@ export async function createApp(options = {}) {
                 snapshot.mode === "configure"
                   ? generate(snapshot.family, snapshot.params)
                   : null;
+            if (mesh && !mesh.checks.valid)
+              fail(422, "Geometry failed mesh checks.");
             let price = null;
             if (b.pricing) {
               if (b.pricing.confirmed !== true)
@@ -658,9 +775,11 @@ export async function createApp(options = {}) {
         }
       }
       if (path.startsWith("/api/")) fail(404, "Endpoint not found");
+      if (!localOnly && path.startsWith("/business-review"))
+        fail(404, "Not found");
       if (!["GET", "HEAD"].includes(method)) fail(405, "Method not allowed");
       let file;
-      if (path === "/" || path === "/owner")
+      if (path === "/" || path === "/owner" || path === "/quote")
         file = resolve(ROOT, "public/index.html");
       else if (/^\/(shared|vendor)\//.test(path))
         file = resolve(ROOT, "." + decodeURIComponent(path));
@@ -676,14 +795,40 @@ export async function createApp(options = {}) {
         )
       )
         fail(403, "Access denied");
-      if (![".html", ".js", ".css", ".json", ".wasm"].includes(extname(file)))
+      if (
+        ![".html", ".js", ".css", ".json", ".wasm", ".png", ".svg"].includes(
+          extname(file),
+        )
+      )
         fail(404, "Not found");
-      const bytes = await readFile(file);
+      const info = await stat(file);
+      let cached = staticCache.get(file);
+      if (!cached || cached.mtime !== info.mtimeMs) {
+        const bytes = await readFile(file);
+        cached = {
+          mtime: info.mtimeMs,
+          bytes,
+          zipped: bytes.length > 1024 ? await compress(bytes) : null,
+          etag: 'W/"' + hash(bytes) + '"',
+        };
+        staticCache.set(file, cached);
+      }
+      res.setHeader("ETag", cached.etag);
+      res.setHeader("Vary", "Accept-Encoding");
+      res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+      if (req.headers["if-none-match"] === cached.etag) {
+        res.writeHead(304);
+        return res.end();
+      }
+      const zipped =
+        cached.zipped && /\bgzip\b/.test(req.headers["accept-encoding"] || "");
+      if (zipped) res.setHeader("Content-Encoding", "gzip");
       res.writeHead(200, {
         "Content-Type": MIME[extname(file)] || "application/octet-stream",
-        "Cache-Control": "no-cache",
       });
-      res.end(method === "HEAD" ? undefined : bytes);
+      res.end(
+        method === "HEAD" ? undefined : zipped ? cached.zipped : cached.bytes,
+      );
     } catch (e) {
       if (!res.headersSent)
         json(
@@ -707,6 +852,8 @@ export async function createApp(options = {}) {
     }
   });
   server.requestTimeout = 45000;
+  server.headersTimeout = 15000;
+  server.keepAliveTimeout = 5000;
   return { server, db, setupToken, volume };
 }
 if (
@@ -714,27 +861,26 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   if (process.argv[2] === "setup-owner") {
-    const { createInterface } = await import("node:readline/promises");
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    const email = await rl.question("Owner email: "),
-      password = await rl.question(
-        "Choose a password (12+ characters; visible in this terminal): ",
-      );
-    const db = openStore(
-      resolve(process.env.DATA_DIR || resolve(ROOT, "data")),
-    );
-    try {
-      createOwner(db, email, password);
-      console.log("Owner account created.");
-    } finally {
-      rl.close();
-      db.close();
-    }
+    await import("./scripts/owner-setup.mjs");
   } else {
     const app = await createApp();
+    const shutdown = () => {
+      app.server.close(() => {
+        app.db.close();
+      });
+      app.server.closeIdleConnections();
+    };
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+    app.server.on("error", (e) => {
+      console.error(
+        e.code === "EADDRINUSE"
+          ? "This port is already in use. Use Start-QuoteDesk.cmd to choose an available local port."
+          : "Quote Desk could not start. Check the configured data directory and port.",
+      );
+      process.exitCode = 1;
+      app.db.close();
+    });
     app.server.listen(
       Number(process.env.PORT || 4173),
       process.env.HOST || "127.0.0.1",

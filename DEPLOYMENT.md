@@ -1,0 +1,51 @@
+# Website integration and deployment decision
+
+Prepared November 9, 2026 (St. Louis time). **Nothing in this plan has been publicly deployed, purchased, merged or applied to DNS.**
+
+## Selected approach
+
+The public business site identifies itself as GoDaddy Website Builder. Its navigation currently includes Home, About Us, Portfolio, Our Services and Get a Quote; the quote page is a basic contact/attachment form. Public inspection establishes the platform and branding, not the account's purchased hosting entitlements or DNS authority. No authenticated GoDaddy or hosting account was available.
+
+Keep the existing site and place the backend app at **https://quote.printelligentdesigns.com**. The present Website Builder integration has no verified Node/SQLite route or reverse proxy for `/quote`; a subdomain preserves the existing site and supports a durable app host. Do not use an iframe. The app reuses the existing business logo, dark teal/turquoise styling, a business-site return link, and its own authenticated `/owner` workspace.
+
+The local `/business-review.html` page demonstrates the proposed quote entry point and links into the working local app. It is a representative integration mockup, not an edited copy of the live site. The server blocks this review page on public origins. `/quote` is also an app-side alias, but it does not create a route on GoDaddy.
+
+## Costs and alternatives
+
+| Option                                | Cost / limits                                                                                                                                          | Decision                                                                                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Current local app, rule-based intake  | No API or hosting subscription charge; existing PC/electricity required; available only while PC is on                                                 | Working now; no image understanding or generative conversation                                                                                                                       |
+| Render Starter + 2 GB persistent disk | Published compute $7/month plus $0.25/GB/month: approximately **$7.50/month**, before taxes, bandwidth/other overages and any backup destination costs | Lowest-cost straightforward fit among services evaluated; approval required; not a promise of lowest price across all hosts                                                          |
+| Render free web service               | Sleeps after inactivity; filesystem ephemeral; persistent disk unavailable; free PostgreSQL expires after 30 days                                      | Unsuitable for durable customer records; no account created                                                                                                                          |
+| Cloudflare Workers free               | 100,000 requests/day, 10 ms CPU/request, 128 MB memory in current docs; separate storage quotas                                                        | Not a drop-in host for synchronous SQLite, scrypt and WASM geometry. Would require a substantial storage/runtime redesign; not implemented                                           |
+| Gemini unpaid API                     | Current unpaid-service terms permit product improvement and human review and warn against submitting confidential/personal data                        | Rejected for this customer-data workflow. No key, file transfer or provider change; changing rate quotas would not resolve that privacy mismatch                                     |
+| Local language model                  | Would require a selected commercially licensed model, model-specific license review, storage, RAM/GPU sizing and installation                          | No model installed or recommended as a public service. PC has about 32 GB RAM; GPU suitability unverified. PC-off availability remains unsolved; rules meet the free requirement now |
+
+Existing GoDaddy/domain charges remain separate. Render's free Hobby workspace is distinct from paid compute/disk; confirm the checkout total and commercial-service terms before accepting anything. A free API allowance does not pay hosting charges. No reliable zero-additional-cost public deployment of the existing stack with persistent storage was established.
+
+OpenAI billing remains separate from ChatGPT. Current official guidance lists an API credit benefit for eligible Pro 100/200/500 and qualifying Business subscriptions, after seven days and explicit activation; grants expire with the relevant period. Eligibility does not prove a grant exists. The connected tools did not expose TJ's entitlement or balance. Do not infer eligibility from a plan nickname. Verify the displayed benefit and receiving organization in account billing if AI is desired. No credits purchased, recharge enabled, or benefit activated here. Keep `AI_MODE=rules` for a dependable zero-API-cost service.
+
+## Concrete rollout awaiting approval
+
+1. **Approve the hosting budget and provide authenticated hosting access.** The prepared `render.yaml` proposes one Starter Docker service with one 2 GB disk, no automatic deploys, `/api/health`, `AI_MODE=rules`, and a 512 MB attachment-byte quota. This is proposed configuration, not a provisioned resource. Verify current price at checkout. Keep the PR draft until accepted.
+2. Provision a private/staged review deployment from the reviewed commit. Mount `/app/data`, verify the `node` user can write it, and keep exactly one instance. Set `PUBLIC_ORIGIN` to the exact HTTPS staging origin without a trailing slash. Do not copy local customer records or secrets unless a deliberate migration is approved. No OpenAI key is needed in free mode.
+3. Initialize the owner using `node server.mjs setup-owner` in the host's private interactive terminal. Owner chooses and enters the password. Test login, logout, Secure/HttpOnly/SameSite cookies, canonical-host enforcement, upload denial across sessions, and persistence after deploy/restart. Verify proxy behavior; application rate limits currently aggregate by proxy IP rather than trusting spoofable forwarded headers. Before public traffic, configure verified edge limits/trusted-proxy rules appropriate to the host.
+4. Choose a private encrypted backup destination and retention policy. Establish daily SQLite online backups, a pre-deploy backup, disk alerts and a successful restore to a separate data directory. Host disk snapshots alone do not substitute for application-consistent, independently recoverable backups. Confirm retention/deletion practices and customer privacy wording before accepting real requests. No automated purge is enabled.
+5. Re-run the documented E2E checks against the real staging service, including mobile hardware, large-file limits, restart, restore, TLS and HTTPS-origin sessions. Docker/cloud volume behavior and this host's performance are not verified locally. Use fictional records for staging.
+6. **Final live approval:** add the custom domain in Render. Add only a `quote` CNAME at the actual DNS provider pointing to the exact service hostname Render supplies. Verify ownership, certificate issuance and HTTPS redirect. Set canonical `PUBLIC_ORIGIN=https://quote.printelligentdesigns.com` and re-test. Do not change apex, `www`, MX, nameservers or email records. DNS access is still needed; no exact CNAME target exists until provisioning.
+7. In GoDaddy's unpublished editor, change the current Get a Quote entry to **Request a Custom Quote**, linking to `https://quote.printelligentdesigns.com/`, and add the same prominent action button on Home and Our Services. Review desktop/phone layouts and publish only after approval. Keep a record of the original links/content. Do not delete the existing form until the new flow is accepted.
+8. Verify from a separate device/network with the owner PC off. Confirm request delivery in the queue, owner-controlled quote approval, monitoring and backup alerts. Record the deployed commit and recovery instructions. No automatic email sending or payment is promised by this release.
+
+## Rollback
+
+Before changing navigation or DNS, export/screenshot the current settings and take a private database backup. If the app fails after launch, restore the original GoDaddy quote link/button and keep the old form available. Remove or revert only the newly added `quote` record if necessary. Roll back the app to the preceding verified commit using the same durable data disk. Do not restore an older database over newer requests; restore to a new directory and reconcile new records deliberately. Disks impose a single-instance deployment and potential restart downtime. Leave auto-deploy disabled until rollout is accepted.
+
+## Official sources checked
+
+- [Render pricing](https://render.com/pricing) — compute/disk prices, fetched directly from official page data.
+- [Render free services](https://render.com/docs/free), [persistent disks](https://render.com/docs/disks), [custom domains](https://render.com/docs/custom-domains), [Blueprint reference](https://render.com/docs/blueprint-spec).
+- [GoDaddy external header links](https://www.godaddy.com/help/add-an-external-link-to-my-websites-header-or-footer-42420), [action buttons](https://www.godaddy.com/help/edit-action-buttons-on-my-website-24710).
+- [OpenAI subscription API-credit eligibility](https://help.openai.com/en/articles/20001626-api-credits-benefit-for-eligible-chatgpt-subscriptions).
+- [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [Gemini API terms](https://ai.google.dev/gemini-api/terms).
+
+Prices, quotas, terms and entitlements must be reconfirmed when provisioning. No account terms were accepted by this review.

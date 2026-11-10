@@ -2,25 +2,26 @@
 
 A customer design-to-quote workspace and private owner queue for Printelligent Designs. This release is prepared for local review. It has **not been publicly deployed**.
 
-## Start locally
+## Open and stop the app (Windows)
 
-Requires Node.js 24 or newer. Runtime geometry dependencies are pinned and included, so no npm install or remote CDN is needed.
+In this checkout, double-click **Start-QuoteDesk.cmd**. It starts a separate background server, waits for readiness, and opens your default browser. It continues after ChatGPT or the launcher closes. **Open-Owner-Workspace.cmd** opens the private owner login; **Stop-QuoteDesk.cmd** stops only the verified local app and preserves saved requests.
 
-```powershell
-cd C:\Users\wirku\Documents\Codex\2026-11-09\new-chat-3\repo
-node --env-file-if-exists=../.env.local server.mjs
-```
+The usual address is **http://localhost:4173**. If occupied, the launcher selects an available port and opens that address automatically. It reuses an existing verified instance. Errors stay visible; details go to ignored `data/local-server.log`. If an interrupted start leaves `data/local-launch.lock`, first close other launchers, then remove only that lock and retry. Do not delete the data folder.
 
-Open **http://localhost:4173**. Use that exact origin rather than 127.0.0.1; write requests intentionally require the configured origin. Stop with Ctrl+C. The key for this local checkout is in the user-approved parent `.env.local`, outside this repository. For another checkout, supply your own ignored environment file or environment variables. Never commit API keys.
+A verified portable Node.js 24.22.2 runtime is already installed in this local checkout. A fresh GitHub checkout excludes the runtime binary: run **Setup-Local.cmd** once (downloads from nodejs.org and verifies the pinned SHA-256), or install Node.js 24+ from the official site. If Windows policy blocks the setup script, use the official Node installer; do not weaken system policy. No npm install is needed; geometry dependencies are vendored.
+
+The launcher always selects free rule-based guidance, even when a key exists in the approved parent `.env.local`. Keys, records, runtime files and logs are ignored by Git.
+
+**Local** means this PC only, while it is on. **Review** means a verified candidate, not a public service. The local [business integration review](http://localhost:4173/business-review.html) demonstrates the proposed entry point. A **public customer website** needs independent hosting and durable storage; see [DEPLOYMENT.md](DEPLOYMENT.md). The main website and its DNS have not been changed.
 
 ### Create the owner login
 
-1. Start the server and open **http://localhost:4173/owner**.
+1. Open **Open-Owner-Workspace.cmd**.
 2. Expand **First time? Create your owner login**.
-3. Open `data/owner-setup-token.txt` locally, copy its token into the form, and choose your email and a password of at least 12 characters.
-4. Select **Create owner login**, then sign in.
+3. Open `data/owner-setup-token.txt` locally and copy its token into the form. Choose your own email and a unique password of 12–256 characters.
+4. Select **Create owner login**, then sign in. Store your password safely.
 
-The bootstrap form only works from the server's own computer and only before an owner exists. The token changes on restart. No default production password is provided. For a remote server, create the owner locally before exposure, or use `node server.mjs setup-owner` from its private terminal. The terminal option visibly echoes the password; prefer the browser setup when possible.
+No default owner account is installed. Browser setup works only on a local origin before an owner exists; the setup token changes on restart and is removed after successful setup. For a hosted instance, use its private interactive terminal: `node server.mjs setup-owner`. Password entry is hidden. Public browser bootstrap is disabled even behind a loopback proxy. Owner password reset is not exposed publicly; recovery requires private server administration and a verified backup.
 
 ## What works
 
@@ -32,25 +33,27 @@ The bootstrap form only works from the server's own computer and only before an 
 - STL and settings-manifest downloads for customer originals or approved owner revisions. Export rechecks dimensions, finite coordinates, oriented edge incidence, degenerate triangles and positive volume; oversize parts require owner acknowledgment. Manifold constructs the solids; this is not a guarantee of fit, strength or printability.
 - Custom CAD prompt copying and brief download with assumptions, referenced filenames, unknowns and requested parametric source/STL checks. Owners can attach returned `.scad`, `.py`, `.stl`, `.step` or `.3mf` files to a new revision. Uploaded CAD is stored as data and never executed; inspect it in Bambu Studio or the appropriate CAD tool.
 
-## AI behavior and current limitation
+## Free guidance and optional AI
 
-The server uses `POST https://api.openai.com/v1/responses`, model `gpt-6.1-terra`, `store:false` and strict JSON-schema Structured Outputs. Application validation rejects invalid or unknown settings before showing a proposal. The customer must explicitly accept a proposal. Slider/field adjustments never call AI.
+**Default: zero API calls and zero API charges.** Rule-based guidance asks targeted questions, preserves unknown measurements, and can offer clearly labeled family starter settings. It does not interpret photos or infer dimensions from prose. The customer confirms a suggested family before application. Manual customization, real preview, submission, owner review and CAD-prompt copying work without a key or internet AI service.
 
-The live API check returned **HTTP 429 / insufficient_quota / credit_balance_exhausted** on November 9, 2026. The valid key is configured, but successful real-model intake and photo interpretation remain unverified until API credits are available. No billing changes were made. Form entry, preview, submission and owner review work without AI. To test an outage explicitly, set `AI_DISABLED=1` and restart.
+OpenAI remains an optional server-side integration: Responses API, `gpt-6.1-terra`, `store:false`, strict Structured Outputs and application validation. To deliberately enable it, configure `AI_MODE=openai` and a funded server-side key, then start the server directly instead of the free-mode launcher. Only guided-help clicks send text, recent conversation and up to two supported images under 4 MB each. Disclose this to customers first. No provider was changed and no customer data was sent elsewhere during this review. Set `AI_DISABLED=1` to force rule guidance.
 
-Only guided-help clicks send description, recent conversation and up to two supported images under 4 MB each to OpenAI. Other attachments are retained for owner review and referenced by filename in the handoff. Uploaded content is untrusted data; it cannot supply system instructions or executable code.
+The earlier November 9 live check returned 429 / insufficient_quota / credit_balance_exhausted. This is historical evidence, not a current balance check. This review made no billable model calls. Successful live model output and photo interpretation remain unverified. [DEPLOYMENT.md](DEPLOYMENT.md) records current official billing/credit sources and free-service limitations; subscription eligibility and issued credits could not be established through the connected account tools.
 
 ## Storage and deployment setup
 
-| Setting          | Default / purpose                                                    |
-| ---------------- | -------------------------------------------------------------------- |
-| `OPENAI_API_KEY` | Server-side API key; optional for manual operation                   |
-| `OPENAI_MODEL`   | `gpt-6.1-terra`                                                      |
-| `PUBLIC_ORIGIN`  | `http://localhost:4173`; exact external origin in production         |
-| `HOST`, `PORT`   | `127.0.0.1`, `4173`                                                  |
-| `DATA_DIR`       | Repository-local ignored `data/`; use a durable volume in production |
-| `PRINTER_X/Y/Z`  | `256` each, millimeters                                              |
-| `AI_DISABLED`    | `1` simulates an outage                                              |
+| Setting                 | Default / purpose                                                    |
+| ----------------------- | -------------------------------------------------------------------- |
+| `AI_MODE`               | `rules` by default; `openai` is explicit opt-in                      |
+| `MAX_UPLOAD_STORAGE_MB` | `1024` locally; proposed host cap `512`                              |
+| `OPENAI_API_KEY`        | Server-side API key; optional for manual operation                   |
+| `OPENAI_MODEL`          | `gpt-6.1-terra`                                                      |
+| `PUBLIC_ORIGIN`         | `http://localhost:4173`; exact external origin in production         |
+| `HOST`, `PORT`          | `127.0.0.1`, `4173`                                                  |
+| `DATA_DIR`              | Repository-local ignored `data/`; use a durable volume in production |
+| `PRINTER_X/Y/Z`         | `256` each, millimeters                                              |
+| `AI_DISABLED`           | `1` simulates an outage                                              |
 
 Production needs a Node 24 host with durable disk, HTTPS/reverse proxy, hosting secrets, owner setup and a tested backup/restore process. The included Dockerfile is a packaging starting point; Docker and a cloud deployment were not tested here. Do not use an ephemeral serverless filesystem for SQLite. This build is a single-instance app; multi-instance deployment requires shared storage, distributed limits and a migration plan.
 
@@ -58,13 +61,18 @@ Store `OPENAI_API_KEY` in hosting secrets, set the canonical HTTPS `PUBLIC_ORIGI
 
 Uploads are limited to eight per revision, eight MB per file and forty MB per session. File access requires its draft session or an owner session. Download responses are attachments with sandboxing; uploaded CAD is never rendered as HTML or executed. Image/PDF signatures are checked, but files are not malware-scanned. There is no automated retention policy or account recovery flow yet. Operational access, backups, disk limits and retention need to be set for the chosen host.
 
-### Backups
+### Backups and safe restoration
+
+Run these from the repository in PowerShell. Use a private location outside Git; never upload a backup to this public repository.
 
 ```powershell
-node scripts/backup.mjs C:\private-backups\quote-desk.sqlite
+.\runtime\node.exe scripts/backup.mjs ..\private-backups\quote-desk-2026-11-09.sqlite
+.\runtime\node.exe scripts/restore-backup.mjs ..\private-backups\quote-desk-2026-11-09.sqlite ..\restored-quote-data
 ```
 
-Create the destination directory first. The SQLite online-backup API includes uploads and all private quote data. Protect backups like the live data directory. To restore, stop the server, preserve the current database for rollback, replace `quotes.sqlite` with the backup, remove only stale WAL/SHM files from that stopped database, and restart. Test restoration in an isolated directory before relying on a backup.
+Backup includes requests, frozen revisions, owner records and attachment bytes using SQLite's online backup API. Existing filenames are refused. Restore checks integrity and relationships, requires a NEW directory, verifies record counts and revokes old sessions. It never replaces live data. Test the restored copy in isolation, then stop the server and deliberately switch `DATA_DIR` (or `QUOTE_DESK_LOCAL_DATA` for the launcher) to the verified directory. Preserve the old directory for rollback. Use a fresh timestamped backup for each run.
+
+A local backup is not off-site protection. Before public launch, select a private encrypted backup destination, schedule daily backups and monitor restore success and disk use; this requires host/storage access and a retention decision.
 
 ## Checks
 

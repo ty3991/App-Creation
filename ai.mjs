@@ -1,4 +1,5 @@
 import { families, validate, unanswered } from "./shared/schema.js";
+import { guidedIntake } from "./shared/intake-rules.js";
 export const intakeSchema = {
   type: "object",
   properties: {
@@ -84,11 +85,8 @@ export async function intake(
 ) {
   if (!key || disabled)
     return {
-      available: false,
-      reply:
-        "Guided AI is unavailable. You can answer the measurement questions below and submit normally.",
-      questions: unanswered(snapshot.brief),
-      proposal: null,
+      ...guidedIntake(snapshot),
+      reply: guidedIntake(snapshot).reply,
     };
   try {
     const input = [
@@ -135,11 +133,8 @@ export async function intake(
     return { available: true, ...validateIntake(JSON.parse(text)) };
   } catch {
     return {
-      available: false,
-      reply:
-        "AI is temporarily unavailable. Your notes and uploads are safe; continue with the form.",
-      questions: unanswered(snapshot.brief),
-      proposal: null,
+      ...guidedIntake(snapshot),
+      reply: "AI is temporarily unavailable. " + guidedIntake(snapshot).reply,
     };
   }
 }

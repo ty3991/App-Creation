@@ -1,11 +1,19 @@
 @echo off
 cd /d "%~dp0"
-echo Starting Printelligent Quote Desk at http://localhost:4173
-echo Press Ctrl+C in this window to stop the server.
-node --env-file-if-exists=../.env.local server.mjs
+if exist "%~dp0runtime\node.exe" (
+  "%~dp0runtime\node.exe" scripts\local-app.mjs start
+  if errorlevel 1 pause
+  exit /b
+)
+where node >nul 2>nul
+if errorlevel 1 (
+  echo Node.js is missing. Double-click Setup-Local.cmd once, then try again.
+  pause
+  exit /b 1
+)
+node scripts\local-app.mjs start
 if errorlevel 1 (
   echo.
-  echo Node.js 24 or newer must be installed and available on PATH.
-  echo See README.md for setup instructions.
+  echo See the message above and README.md for help.
   pause
 )
